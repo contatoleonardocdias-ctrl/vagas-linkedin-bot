@@ -68,7 +68,6 @@ def is_allowed_location(job_loc):
     """Verifica se a localização pertence ao Brasil, Portugal ou Espanha."""
     loc_lower = job_loc.lower()
     
-    # Países explicitamente bloqueados
     blocked_locs = ["united states", "estados unidos", "usa", "canada", "mexico", "colombia", "chile", "united kingdom", "uk"]
     if any(b in loc_lower for b in blocked_locs):
         return False
@@ -135,11 +134,20 @@ def main():
                     seen_links.add(job["link"])
                     found_jobs.append(job)
 
+    # Caso NÃO encontre vagas
     if not found_jobs:
-        print("Nenhuma vaga encontrada para BR, PT ou ES nas últimas 24h.")
+        no_jobs_msg = (
+            "🔍 **Nenhuma nova vaga encontrada nas últimas 24h** (Brasil, Portugal e Espanha).\n\n"
+            "💬 *Mensagem do Dia:*\n"
+            "Assim como uma grande estrutura requer fundações sólidas e tempo para se consolidar, "
+            "as melhores oportunidades profissionais também exigem constância e paciência. "
+            "A ausência de vagas hoje não significa falta de espaço, mas sim que o momento certo está sendo preparado. "
+            "Mantenha o foco, continue se aprimorando e esteja pronto para quando a oportunidade surgir! 🏗️⚙️"
+        )
+        send_telegram_message(no_jobs_msg)
         return
 
-    # Notificação no Telegram
+    # Notificação quando ENCONTRAR vagas
     send_telegram_message(f"🚨 Novas Vagas Exclusivas (BR/PT/ES): Segurança de Barragens ({len(found_jobs)})")
 
     for job in found_jobs[:10]:
