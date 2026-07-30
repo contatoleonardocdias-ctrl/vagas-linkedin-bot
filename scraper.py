@@ -1,4 +1,5 @@
 import os
+import time
 import requests
 from bs4 import BeautifulSoup
 
@@ -42,6 +43,10 @@ EXCLUDE_TERMS = [
     "física", "fisica", "corporativa", "veicular", "privacidade"
 ]
 
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
 def send_telegram_message(message):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Erro: TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não definidos nos Secrets!")
@@ -67,17 +72,28 @@ def is_allowed_location(job_loc):
         return False
     return any(region in loc_lower for region in ALLOWED_REGIONS)
 
+def get_job_description(job_link):
+    """Acessa a página individual da vaga e extrai o texto completo da descrição."""
+    try:
+        # Pausa de 1.5s entre requisições para evitar ser bloqueado pelo LinkedIn
+        time.sleep(1.5)
+        res = requests.get(job_link, headers=HEADERS, timeout=10)
+        if res.status_code == 200:
+            soup = BeautifulSoup(res.text, "html.parser")
+            desc_tag = soup.find("div", class_="show-more-less-html__markup") or soup.find("section", class_="description")
+            if desc_tag:
+                return desc_tag.text.lower()
+    except Exception as e:
+        print(f"Erro ao obter descrição de {job_link}: {e}")
+    return ""
+
 def search_linkedin_jobs(keyword, location):
     jobs = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
 
-    # Busca até 2 páginas de resultados (50 vagas) por termo/país nas últimas 60 dias (f_TPR=r5184000)
     for start in [0, 25]:
         url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keyword}&location={location}&f_TPR=r5184000&start={start}"
         
-        response = requests.get(url, headers=headers)
+        response = requests.get(url, headers=HEADERS)
         if response.status_code != 200:
             continue
 
@@ -100,13 +116,25 @@ def search_linkedin_jobs(keyword, location):
                 job_loc = location_tag.text.strip() if location_tag else location
                 link = link_tag["href"].split("?")[0]
                 
+                # Filtro 1: Localização
                 if not is_allowed_location(job_loc):
                     continue
 
-                has_excluded_term = any(ex in title_lower for ex in EXCLUDE_TERMS)
-                has_dam_term = any(dam in title_lower for dam in DAM_TERMS)
+                # Filtro 2: Exclui termos proibidos no TÍTULO (Segurança do trabalho, etc)
+                if any(ex in title_lower for ex in EXCLUDE_TERMS):
+                    continue
+
+                # Checa se o termo de barragem já está direto no TÍTULO
+                has_dam_in_title = any(dam in title_lower for dam in DAM_TERMS)
                 
-                if has_dam_term and not has_excluded_term:
+                # Se não estiver no título, entra na VAGA e lê a DESCRIÇÃO completa!
+                has_dam_in_desc = False
+                if not has_dam_in_title:
+                    description = get_job_description(link)
+                    has_dam_in_desc = any(dam in description for dam in DAM_TERMS)
+
+                # Se encontrar o termo no Título OU na Descrição, aprova a vaga!
+                if has_dam_in_title or has_dam_in_desc:
                     jobs.append({
                         "title": title,
                         "company": company,
