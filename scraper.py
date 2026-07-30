@@ -5,21 +5,27 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Termos de busca focados
+# Termos de busca exatos (entre aspas para forçar busca exata no LinkedIn)
 KEYWORDS = [
-    "Segurança de Barragens", 
-    "Engenheiro Civil de Segurança de Barragens",
-    "Seguridad de Presas"  # Termo em espanhol para Espanha
+    '"Segurança de Barragens"', 
+    '"Engenheiro Civil de Segurança de Barragens"',
+    '"Seguridad de Presas"'
 ]
 
-# Países para filtragem geográfica
 LOCATIONS = ["Brasil", "Portugal", "Espanha"]
 
-# Palavras-chave obrigatórias no título ou resumo para validação estrita
-STRICT_TERMS = ["barragem", "barragens", "presa", "presas", "dam", "dams"]
+# Palavras de Segurança de Barragens (Pelo menos uma DEVE existir no título)
+DAM_TERMS = ["barragem", "barragens", "presa", "presas", "dam", "dams"]
+
+# Lista Negra: Se o título tiver QUALQUER uma dessas palavras, descarta na hora!
+EXCLUDE_TERMS = [
+    "trabalho", "trabalho", "laboral", "ocupacional", "hst", "sST",
+    "patrimonial", "informação", "informacao", "ti", "dados", "cyber",
+    "física", "fisica", "corporativa", "veicular", "privacidade"
+]
 
 def send_telegram_message(message):
-    """Envia mensagem em texto simples garantindo compatibilidade de caracteres."""
+    """Envia mensagem em texto simples para evitar erros de parse."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Erro: TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não definidos nos Secrets!")
         return
@@ -38,7 +44,7 @@ def send_telegram_message(message):
         print(f"Erro ao enviar para Telegram ({response.status_code}): {response.text}")
 
 def search_linkedin_jobs(keyword, location):
-    """Busca vagas públicas no LinkedIn filtradas por termo e localização."""
+    """Busca e aplica filtros rigorosos para garantir apenas Segurança de Barragens."""
     url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keyword}&location={location}&f_TPR=r86400"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -61,18 +67,23 @@ def search_linkedin_jobs(keyword, location):
         
         if title_tag and link_tag:
             title = title_tag.text.strip()
+            title_lower = title.lower()
             company = company_tag.text.strip() if company_tag else "Empresa não informada"
             job_loc = location_tag.text.strip() if location_tag else location
             link = link_tag["href"].split("?")[0]
             
-            # Filtro de Segurança: Garante que "barragem/presa" esteja no título ou na busca
-            title_lower = title.lower()
-            if any(term in title_lower for term in STRICT_TERMS) or "segurança" in title_lower or "seguridad" in title_lower:
+            # 1. Checa se o título tem alguma palavra proibida (Segurança do Trabalho, TI, etc.)
+            has_excluded_term = any(ex in title_lower for ex in EXCLUDE_TERMS)
+            
+            # 2. Checa se o título menciona explicitamente Barragens / Presas / Dams
+            has_dam_term = any(dam in title_lower for dam in DAM_TERMS)
+            
+            # Só aceita se TIVER termo de barragem E NÃO TIVER termo excluído
+            if has_dam_term and not has_excluded_term:
                 jobs.append({
                     "title": title,
                     "company": company,
                     "location": job_loc,
-                    "country": location,
                     "link": link
                 })
             
@@ -82,7 +93,6 @@ def main():
     found_jobs = []
     seen_links = set()
 
-    # Itera sobre cada país e cada palavra-chave
     for loc in LOCATIONS:
         for kw in KEYWORDS:
             jobs = search_linkedin_jobs(kw, loc)
@@ -92,14 +102,14 @@ def main():
                     found_jobs.append(job)
 
     if not found_jobs:
-        print("Nenhuma nova vaga de Segurança de Barragens encontrada nas últimas 24h.")
+        print("Nenhuma vaga estrita de Segurança de Barragens encontrada nas últimas 24h.")
         return
 
     # Notificação do cabeçalho
-    send_telegram_message(f"🚨 Novas Vagas: Segurança de Barragens (BR / PT / ES) - Total: {len(found_jobs)}")
+    send_telegram_message(f"🚨 Novas Vagas Exclusivas: Segurança de Barragens ({len(found_jobs)})")
 
     # Envio das vagas encontradas
-    for job in found_jobs[:12]:
+    for job in found_jobs[:10]:
         msg = f"📌 {job['title']}\n🏢 {job['company']}\n📍 {job['location']}\n🔗 {job['link']}"
         send_telegram_message(msg)
 
