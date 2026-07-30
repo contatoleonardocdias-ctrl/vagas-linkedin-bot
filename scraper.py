@@ -5,7 +5,7 @@ from bs4 import BeautifulSoup
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Termos de busca exatos (entre aspas para forçar busca exata no LinkedIn)
+# Termos de busca exatos
 KEYWORDS = [
     '"Segurança de Barragens"', 
     '"Engenheiro Civil de Segurança de Barragens"',
@@ -14,18 +14,39 @@ KEYWORDS = [
 
 LOCATIONS = ["Brasil", "Portugal", "Espanha"]
 
+# Estados do Brasil, Distritos de Portugal e Comunidades Autônomas/Regiões da Espanha
+ALLOWED_REGIONS = [
+    # Países
+    "brasil", "brazil", "portugal", "espanha", "spain", "españa",
+    
+    # Brasil (Siglas e Nomes)
+    "sp", "mg", "rj", "pa", "ba", "go", "mt", "ms", "pr", "rs", "sc", "pe", "ce", "ma", 
+    "es", "am", "rn", "pb", "al", "se", "pi", "to", "ro", "ac", "rr", "ap", "df",
+    "são paulo", "minas gerais", "rio de janeiro", "paraná", "rio grande do sul",
+    
+    # Portugal (Distritos e Regiões)
+    "lisboa", "lisbon", "porto", "braga", "aveiro", "coimbra", "setúbal", "leiria", 
+    "faro", "viseu", "santarém", "viana do castelo", "vila real", "castelo branco", 
+    "guarda", "évora", "beja", "bragança", "portalegre", "madeira", "açores", "azores",
+    
+    # Espanha (Comunidades Autônomas e Províncias Principais)
+    "madrid", "catalunya", "cataluña", "barcelona", "andalucía", "sevilla", "valencia", 
+    "galicia", "a coruña", "basque country", "país vasco", "bilbao", "aragon", "zaragoza", 
+    "castilla y león", "castilla-la mancha", "extremadura", "asturias", "oviedo", 
+    "murcia", "navarra", "cantabria", "la rioja", "canarias", "baleares"
+]
+
 # Palavras de Segurança de Barragens (Pelo menos uma DEVE existir no título)
 DAM_TERMS = ["barragem", "barragens", "presa", "presas", "dam", "dams"]
 
-# Lista Negra: Se o título tiver QUALQUER uma dessas palavras, descarta na hora!
+# Lista Negra de Títulos (elimina Segurança do Trabalho, TI, etc.)
 EXCLUDE_TERMS = [
-    "trabalho", "trabalho", "laboral", "ocupacional", "hst", "sST",
+    "trabalho", "laboral", "ocupacional", "hst", "sst",
     "patrimonial", "informação", "informacao", "ti", "dados", "cyber",
     "física", "fisica", "corporativa", "veicular", "privacidade"
 ]
 
 def send_telegram_message(message):
-    """Envia mensagem em texto simples para evitar erros de parse."""
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("Erro: TELEGRAM_TOKEN ou TELEGRAM_CHAT_ID não definidos nos Secrets!")
         return
@@ -43,8 +64,18 @@ def send_telegram_message(message):
     if response.status_code != 200:
         print(f"Erro ao enviar para Telegram ({response.status_code}): {response.text}")
 
+def is_allowed_location(job_loc):
+    """Verifica se a localização pertence ao Brasil, Portugal ou Espanha."""
+    loc_lower = job_loc.lower()
+    
+    # Países explicitamente bloqueados
+    blocked_locs = ["united states", "estados unidos", "usa", "canada", "mexico", "colombia", "chile", "united kingdom", "uk"]
+    if any(b in loc_lower for b in blocked_locs):
+        return False
+        
+    return any(region in loc_lower for region in ALLOWED_REGIONS)
+
 def search_linkedin_jobs(keyword, location):
-    """Busca e aplica filtros rigorosos para garantir apenas Segurança de Barragens."""
     url = f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords={keyword}&location={location}&f_TPR=r86400"
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -72,13 +103,16 @@ def search_linkedin_jobs(keyword, location):
             job_loc = location_tag.text.strip() if location_tag else location
             link = link_tag["href"].split("?")[0]
             
-            # 1. Checa se o título tem alguma palavra proibida (Segurança do Trabalho, TI, etc.)
+            # Filtro 1: Validação de localização estrita (BR, PT, ES)
+            if not is_allowed_location(job_loc):
+                continue
+
+            # Filtro 2: Exclui palavras de segurança do trabalho / TI
             has_excluded_term = any(ex in title_lower for ex in EXCLUDE_TERMS)
             
-            # 2. Checa se o título menciona explicitamente Barragens / Presas / Dams
+            # Filtro 3: Deve conter obrigatoriamente termo de barragem/presa
             has_dam_term = any(dam in title_lower for dam in DAM_TERMS)
             
-            # Só aceita se TIVER termo de barragem E NÃO TIVER termo excluído
             if has_dam_term and not has_excluded_term:
                 jobs.append({
                     "title": title,
@@ -102,13 +136,12 @@ def main():
                     found_jobs.append(job)
 
     if not found_jobs:
-        print("Nenhuma vaga estrita de Segurança de Barragens encontrada nas últimas 24h.")
+        print("Nenhuma vaga encontrada para BR, PT ou ES nas últimas 24h.")
         return
 
-    # Notificação do cabeçalho
-    send_telegram_message(f"🚨 Novas Vagas Exclusivas: Segurança de Barragens ({len(found_jobs)})")
+    # Notificação no Telegram
+    send_telegram_message(f"🚨 Novas Vagas Exclusivas (BR/PT/ES): Segurança de Barragens ({len(found_jobs)})")
 
-    # Envio das vagas encontradas
     for job in found_jobs[:10]:
         msg = f"📌 {job['title']}\n🏢 {job['company']}\n📍 {job['location']}\n🔗 {job['link']}"
         send_telegram_message(msg)
